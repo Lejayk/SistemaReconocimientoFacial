@@ -165,11 +165,34 @@ class RegistrationScreen(ctk.CTkFrame):
         )
         self._quality_label.grid(row=14, column=0, padx=15, pady=(0, 5), sticky="w")
 
+        # ---- Sección: Personas registradas con opción de eliminar ----
+        sep = ctk.CTkFrame(left, height=2, fg_color="gray40")
+        sep.grid(row=15, column=0, padx=15, pady=10, sticky="ew")
+
+        ctk.CTkLabel(
+            left, text="👥 Personas Registradas",
+            font=ctk.CTkFont(size=14, weight="bold"),
+        ).grid(row=16, column=0, padx=15, pady=(0, 5), sticky="w")
+
+        self._persons_list_frame = ctk.CTkScrollableFrame(
+            left, width=200, height=120
+        )
+        self._persons_list_frame.grid(row=17, column=0, padx=15, pady=(0, 5), sticky="ew")
+
+        ctk.CTkButton(
+            left, text="🔄 Actualizar Lista",
+            command=self._refresh_persons_list,
+            width=120, height=28, font=ctk.CTkFont(size=12),
+        ).grid(row=18, column=0, padx=15, pady=(0, 5), sticky="ew")
+
         # Mensaje de estado
         self._status_label = ctk.CTkLabel(
             left, text="Estado: Listo", wraplength=220
         )
         self._status_label.grid(row=21, column=0, padx=15, pady=10, sticky="sw")
+        
+        # Populate the list on initialization
+        self.after(500, self._refresh_persons_list)
 
         # ---- Panel derecho: preview en vivo ----
         right = ctk.CTkFrame(self)
