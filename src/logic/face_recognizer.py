@@ -1,9 +1,10 @@
 """
 FaceRecognizer
 ==============
-Handles face detection, embedding extraction and identity matching.
+Maneja la detección de rostros, extracción de embeddings y
+comparación de identidades.
 
-Dependencies: OpenCV, DeepFace (or a raw TensorFlow/ONNX model).
+Dependencias: OpenCV, DeepFace (o modelo TensorFlow/ONNX).
 """
 
 from __future__ import annotations
@@ -18,32 +19,37 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Type aliases
+# Alias de tipos
 # ---------------------------------------------------------------------------
 Embedding = List[float]
 
 
 class FaceRecognizer:
-    """Detect faces in frames, build embeddings and compare identities.
+    """Detectar rostros en frames, construir embeddings y comparar identidades.
 
     Parameters
     ----------
     model_name:
-        DeepFace model to use for embedding extraction.
-        Supported values: ``"VGG-Face"``, ``"Facenet"``, ``"Facenet512"``,
+        Modelo de DeepFace para extracción de embeddings.
+        Valores soportados: ``"VGG-Face"``, ``"Facenet"``, ``"Facenet512"``,
         ``"OpenFace"``, ``"DeepFace"``, ``"ArcFace"``.
     detector_backend:
-        Face detector used internally by DeepFace.
-        Supported values: ``"opencv"``, ``"ssd"``, ``"mtcnn"``,
+        Detector facial usado internamente por DeepFace.
+        Valores soportados: ``"opencv"``, ``"ssd"``, ``"mtcnn"``,
         ``"retinaface"``, ``"mediapipe"``.
     distance_metric:
-        Similarity metric for comparison.
-        Supported values: ``"cosine"``, ``"euclidean"``,
+        Métrica de similitud para comparación.
+        Valores soportados: ``"cosine"``, ``"euclidean"``,
         ``"euclidean_l2"``.
     threshold:
-        Maximum distance to consider two faces as the same person.
-        ``None`` uses DeepFace's built-in default for the chosen model.
+        Distancia máxima para considerar el mismo rostro.
+        ``None`` usa el valor por defecto de DeepFace para el modelo elegido.
     """
+
+    # Tamaño mínimo de rostro aceptable (píxeles)
+    _MIN_FACE_SIZE = 80
+    # Umbral mínimo de nitidez (varianza del Laplaciano)
+    _MIN_SHARPNESS = 50.0
 
     def __init__(
         self,
@@ -57,38 +63,38 @@ class FaceRecognizer:
         self.distance_metric = distance_metric
         self.threshold = threshold
 
-        # Lazy-import DeepFace to allow the module to be imported even when
-        # the full dependency stack is not installed (e.g. during unit tests).
+        # Importación lazy de DeepFace para permitir importar el módulo
+        # incluso cuando no están instaladas todas las dependencias.
         try:
             from deepface import DeepFace  # type: ignore
             self._deepface = DeepFace
-            logger.info("DeepFace loaded (model=%s)", self.model_name)
+            logger.info("DeepFace cargado (modelo=%s)", self.model_name)
         except ImportError:
             self._deepface = None
             logger.warning(
-                "DeepFace is not installed. Face recognition will not work."
+                "DeepFace no está instalado. El reconocimiento facial no funcionará."
             )
 
     # ------------------------------------------------------------------
-    # Public API
+    # API Pública
     # ------------------------------------------------------------------
 
     def detect_faces(self, frame: np.ndarray) -> List[dict]:
-        """Detect all faces in *frame* and return their bounding boxes.
+        """Detectar todos los rostros en *frame* y devolver sus bounding boxes.
 
         Parameters
         ----------
         frame:
-            BGR image as a NumPy array (as returned by ``cv2.VideoCapture``).
+            Imagen BGR como array de NumPy (como la devuelve ``cv2.VideoCapture``).
 
         Returns
         -------
         list of dict
-            Each entry has keys ``"x"``, ``"y"``, ``"w"``, ``"h"`` (pixel
-            coordinates of the face region) plus ``"confidence"`` (float).
+            Cada entrada tiene las claves ``"x"``, ``"y"``, ``"w"``, ``"h"``
+            (coordenadas en píxeles de la región facial) y ``"confidence"`` (float).
         """
         if self._deepface is None:
-            raise RuntimeError("DeepFace is not installed.")
+            raise RuntimeError("DeepFace no está instalado.")
 
         try:
             results = self._deepface.extract_faces(
@@ -97,7 +103,7 @@ class FaceRecognizer:
                 enforce_detection=False,
             )
         except Exception as exc:
-            logger.error("Face detection failed: %s", exc)
+            logger.error("La detección de rostros falló: %s", exc)
             return []
 
         faces = []
@@ -115,20 +121,20 @@ class FaceRecognizer:
         return faces
 
     def get_embedding(self, face_img: np.ndarray) -> Optional[Embedding]:
-        """Generate a feature embedding vector for a single cropped face.
+        """Generar un vector de embedding para un rostro recortado.
 
         Parameters
         ----------
         face_img:
-            BGR image of the face region (cropped).
+            Imagen BGR de la región del rostro (recortada).
 
         Returns
         -------
         list of float or None
-            128-D / 512-D embedding vector, or ``None`` on failure.
+            Vector de embedding 128-D / 512-D, o ``None`` en caso de fallo.
         """
         if self._deepface is None:
-            raise RuntimeError("DeepFace is not installed.")
+            raise RuntimeError("DeepFace no está instalado.")
 
         try:
             result = self._deepface.represent(
@@ -137,61 +143,167 @@ class FaceRecognizer:
                 detector_backend=self.detector_backend,
                 enforce_detection=False,
             )
-            # DeepFace.represent returns a list; take the first result.
+            # DeepFace.represent devuelve una lista; tomar el primer resultado.
             return result[0]["embedding"] if result else None
         except Exception as exc:
-            logger.error("Embedding extraction failed: %s", exc)
+            logger.error("La extracción de embedding falló: %s", exc)
             return None
+
+    def assess_face_quality(self, face_img: np.ndarray) -> dict:
+        """Evaluar la calidad de una imagen de rostro.
+
+        Verifica tamaño mínimo y nitidez para determinar si la imagen
+        es apta para registro.
+
+        Parameters
+        ----------
+        face_img:
+            Imagen BGR del rostro recortado.
+
+        Returns
+        -------
+        dict
+            ``{"is_valid": bool, "size_ok": bool, "sharpness_ok": bool,
+               "score": float, "width": int, "height": int,
+               "sharpness": float}``
+        """
+        h, w = face_img.shape[:2]
+        size_ok = w >= self._MIN_FACE_SIZE and h >= self._MIN_FACE_SIZE
+
+        # Calcular nitidez usando varianza del Laplaciano
+        gray = cv2.cvtColor(face_img, cv2.COLOR_BGR2GRAY) if len(face_img.shape) == 3 else face_img
+        sharpness = cv2.Laplacian(gray, cv2.CV_64F).var()
+        sharpness_ok = sharpness >= self._MIN_SHARPNESS
+
+        # Score compuesto (0 a 100)
+        size_score = min(w, h) / self._MIN_FACE_SIZE  # >= 1.0 es bueno
+        sharp_score = sharpness / self._MIN_SHARPNESS  # >= 1.0 es bueno
+        score = min(100.0, (min(size_score, 2.0) / 2.0 * 50) + (min(sharp_score, 2.0) / 2.0 * 50))
+
+        is_valid = size_ok and sharpness_ok
+
+        return {
+            "is_valid": is_valid,
+            "size_ok": size_ok,
+            "sharpness_ok": sharpness_ok,
+            "score": round(score, 1),
+            "width": w,
+            "height": h,
+            "sharpness": round(sharpness, 2),
+        }
 
     def register_face(
         self,
         name: str,
         face_img: np.ndarray,
-        db_manager,  # DatabaseManager instance (avoid circular import)
+        db_manager,  # Instancia de DatabaseManager (evitar import circular)
+        apellido: str = "",
+        email: Optional[str] = None,
     ) -> bool:
-        """Extract an embedding from *face_img* and persist it in the DB.
+        """Extraer embedding de *face_img* y persistirlo en la BD.
 
         Parameters
         ----------
         name:
-            Person's display name or ID.
+            Nombre de la persona.
         face_img:
-            BGR image of the face to register.
+            Imagen BGR del rostro a registrar.
         db_manager:
-            :class:`~src.database.db_manager.DatabaseManager` instance.
+            Instancia de :class:`~src.database.db_manager.DatabaseManager`.
+        apellido:
+            Apellido de la persona.
+        email:
+            Correo electrónico (opcional).
 
         Returns
         -------
         bool
-            ``True`` on success, ``False`` otherwise.
+            ``True`` si el registro fue exitoso, ``False`` en caso contrario.
         """
         embedding = self.get_embedding(face_img)
         if embedding is None:
-            logger.warning("Could not extract embedding for '%s'.", name)
+            logger.warning("No se pudo extraer embedding para '%s'.", name)
             return False
 
-        db_manager.save_person(name=name, embedding=embedding)
-        logger.info("Registered face for '%s'.", name)
+        db_manager.save_person(
+            name=name, embedding=embedding, apellido=apellido, email=email
+        )
+        logger.info("Rostro registrado para '%s %s'.", name, apellido)
         return True
+
+    def register_multiple_faces(
+        self,
+        name: str,
+        apellido: str,
+        email: Optional[str],
+        face_imgs: List[np.ndarray],
+        db_manager,
+    ) -> bool:
+        """Registrar persona usando la mejor captura de múltiples imágenes.
+
+        Evalúa la calidad de cada imagen y usa la de mayor puntuación
+        para extraer el embedding y registrar.
+
+        Parameters
+        ----------
+        name:
+            Nombre de la persona.
+        apellido:
+            Apellido de la persona.
+        email:
+            Correo electrónico (opcional).
+        face_imgs:
+            Lista de imágenes BGR de rostros capturados.
+        db_manager:
+            Instancia de DatabaseManager.
+
+        Returns
+        -------
+        bool
+            ``True`` si el registro fue exitoso.
+        """
+        if not face_imgs:
+            logger.warning("No se proporcionaron imágenes para registrar.")
+            return False
+
+        # Seleccionar la imagen con mejor calidad
+        best_img = None
+        best_score = -1.0
+        for img in face_imgs:
+            quality = self.assess_face_quality(img)
+            if quality["score"] > best_score:
+                best_score = quality["score"]
+                best_img = img
+
+        if best_img is None:
+            return False
+
+        return self.register_face(
+            name=name,
+            face_img=best_img,
+            db_manager=db_manager,
+            apellido=apellido,
+            email=email,
+        )
 
     def compare_embedding(
         self,
         query_embedding: Embedding,
         stored_embedding: Embedding,
     ) -> float:
-        """Compute the distance between two embedding vectors.
+        """Calcular la distancia entre dos vectores de embedding.
 
         Parameters
         ----------
         query_embedding:
-            Embedding of the face to identify.
+            Embedding del rostro a identificar.
         stored_embedding:
-            Embedding stored in the database for a known person.
+            Embedding almacenado en la BD de una persona conocida.
 
         Returns
         -------
         float
-            Distance value. Lower is more similar.
+            Valor de distancia. Menor es más similar.
         """
         q = np.array(query_embedding, dtype=np.float64)
         s = np.array(stored_embedding, dtype=np.float64)
@@ -207,27 +319,28 @@ class FaceRecognizer:
                 s = s / (np.linalg.norm(s) + 1e-10)
             return float(np.linalg.norm(q - s))
 
-        raise ValueError(f"Unknown distance metric: {self.distance_metric}")
+        raise ValueError(f"Métrica de distancia desconocida: {self.distance_metric}")
 
     def identify(
         self,
         face_img: np.ndarray,
         db_manager,
     ) -> Optional[dict]:
-        """Identify the person in *face_img* against stored embeddings.
+        """Identificar la persona en *face_img* contra embeddings almacenados.
 
         Parameters
         ----------
         face_img:
-            BGR image of the face to identify.
+            Imagen BGR del rostro a identificar.
         db_manager:
-            :class:`~src.database.db_manager.DatabaseManager` instance.
+            Instancia de :class:`~src.database.db_manager.DatabaseManager`.
 
         Returns
         -------
         dict or None
-            ``{"name": str, "distance": float, "person_id": int}`` for the
-            best match below the threshold, or ``None`` if no match found.
+            ``{"name": str, "apellido": str, "distance": float,
+              "person_id": int}`` para la mejor coincidencia bajo el
+            umbral, o ``None`` si no hay coincidencia.
         """
         query_emb = self.get_embedding(face_img)
         if query_emb is None:
@@ -250,6 +363,7 @@ class FaceRecognizer:
         if best_distance <= threshold and best_match is not None:
             return {
                 "name": best_match["name"],
+                "apellido": best_match.get("apellido", ""),
                 "distance": best_distance,
                 "person_id": best_match["id"],
             }
@@ -260,7 +374,7 @@ class FaceRecognizer:
     # ------------------------------------------------------------------
 
     def _default_threshold(self) -> float:
-        """Return a sensible default threshold for the chosen model/metric."""
+        """Devolver un umbral por defecto razonable para el modelo/métrica elegidos."""
         defaults = {
             ("Facenet512", "cosine"): 0.30,
             ("Facenet", "cosine"): 0.40,
@@ -278,35 +392,46 @@ class FaceRecognizer:
         label: str = "",
         color: tuple = (0, 255, 0),
     ) -> np.ndarray:
-        """Draw bounding boxes and an optional label on *frame* (in-place).
+        """Dibujar bounding boxes y etiqueta opcional en *frame* (in-place).
 
         Parameters
         ----------
         frame:
-            BGR image to annotate.
+            Imagen BGR a anotar.
         faces:
-            List of face dicts as returned by :meth:`detect_faces`.
+            Lista de dicts de rostros como los devuelve :meth:`detect_faces`.
         label:
-            Text to draw above the first bounding box.
+            Texto a dibujar encima del primer bounding box.
         color:
-            BGR colour tuple for the rectangle.
+            Tupla de color BGR para el rectángulo.
 
         Returns
         -------
         np.ndarray
-            Annotated frame (same object as *frame*).
+            Frame anotado (mismo objeto que *frame*).
         """
         for face in faces:
             x, y, w, h = face["x"], face["y"], face["w"], face["h"]
             cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
             if label:
+                # Fondo semi-transparente para el texto
+                text_size = cv2.getTextSize(
+                    label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2
+                )[0]
+                cv2.rectangle(
+                    frame,
+                    (x, y - text_size[1] - 10),
+                    (x + text_size[0] + 4, y),
+                    color,
+                    cv2.FILLED,
+                )
                 cv2.putText(
                     frame,
                     label,
-                    (x, y - 10),
+                    (x + 2, y - 5),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    color,
+                    0.6,
+                    (0, 0, 0),
                     2,
                 )
         return frame

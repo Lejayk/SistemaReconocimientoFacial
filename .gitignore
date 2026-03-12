@@ -153,6 +153,13 @@ models/*.caffemodel
 models/*.weights
 models/*.bin
 models/*.tflite
+models/*.xml
+
+# Captured face data
+data/
+
+# Export files
+*.csv
 
 # Database files
 *.db
