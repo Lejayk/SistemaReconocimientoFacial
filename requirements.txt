@@ -1,0 +1,27 @@
+# Computer Vision & Face Detection
+opencv-python>=4.8.0
+opencv-contrib-python>=4.8.0
+
+# Face Recognition & Emotion Analysis
+deepface>=0.0.79
+tf-keras>=2.15.0
+
+# Machine Learning backend
+tensorflow>=2.15.0
+numpy>=1.24.0
+scipy>=1.11.0
+
+# GUI
+customtkinter>=5.2.0
+Pillow>=10.0.0
+
+# Database
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0  # PostgreSQL driver (optional)
+
+# Data handling & reporting
+pandas>=2.0.0
+matplotlib>=3.7.0
+
+# Utilities
+python-dotenv>=1.0.0
