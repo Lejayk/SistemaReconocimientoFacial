@@ -253,9 +253,9 @@ class DetectionScreen(ctk.CTkFrame):
             self._frame_count += 1
             annotated = frame.copy()
 
-            # Detectar rostros
+            # Detección rápida de rostros con Haar Cascade (liviano, cada frame)
             try:
-                faces = self._recognizer.detect_faces(frame)
+                faces = self._recognizer.detect_faces_fast(frame)
             except Exception:
                 faces = []
 

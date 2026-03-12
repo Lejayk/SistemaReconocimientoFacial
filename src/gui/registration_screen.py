@@ -220,7 +220,8 @@ class RegistrationScreen(ctk.CTkFrame):
             annotated = frame.copy()
 
             try:
-                faces = self._recognizer.detect_faces(frame)
+                # Usar detección rápida (Haar Cascade) para el preview en vivo
+                faces = self._recognizer.detect_faces_fast(frame)
                 if faces:
                     face = faces[0]
                     x, y, w, h = face["x"], face["y"], face["w"], face["h"]
@@ -251,8 +252,8 @@ class RegistrationScreen(ctk.CTkFrame):
             self._set_status("❌ No hay frame disponible.", error=True)
             return
 
-        # Detectar y recortar el rostro
-        faces = self._recognizer.detect_faces(self._current_frame)
+        # Detectar y recortar el rostro (usar detección rápida para captura)
+        faces = self._recognizer.detect_faces_fast(self._current_frame)
         if not faces:
             self._set_status("❌ No se detectó ningún rostro. Intenta de nuevo.", error=True)
             return
@@ -344,7 +345,9 @@ class RegistrationScreen(ctk.CTkFrame):
         if success:
             full_name = f"{name} {apellido}"
             self._set_status(f"✅ '{full_name}' registrado exitosamente.")
+            self._recognizer.invalidate_cache()  # Invalidar caché de embeddings
             self._clear_form()
+            self._refresh_persons_list()  # Actualizar lista de personas
         else:
             self._set_status(
                 "❌ Error al registrar. ¿Se detectó un rostro válido?",
@@ -406,3 +409,84 @@ class RegistrationScreen(ctk.CTkFrame):
         """Actualizar la etiqueta de estado con un mensaje."""
         color = "#e74c3c" if error else "white"
         self._status_label.configure(text=f"Estado: {message}", text_color=color)
+
+    # ------------------------------------------------------------------
+    # Gestión de personas registradas
+    # ------------------------------------------------------------------
+
+    def _refresh_persons_list(self) -> None:
+        """Recargar la lista de personas registradas con botones de eliminar."""
+        # Limpiar lista actual
+        for widget in self._persons_list_frame.winfo_children():
+            widget.destroy()
+
+        people = self.db_manager.get_all_people()
+        if not people:
+            ctk.CTkLabel(
+                self._persons_list_frame,
+                text="No hay personas registradas.",
+                font=ctk.CTkFont(size=11),
+                text_color="gray60",
+            ).pack(padx=5, pady=5)
+            return
+
+        for person in people:
+            full_name = f"{person['name']} {person.get('apellido', '')}".strip()
+            row_frame = ctk.CTkFrame(
+                self._persons_list_frame, fg_color="transparent"
+            )
+            row_frame.pack(fill="x", padx=2, pady=2)
+
+            ctk.CTkLabel(
+                row_frame, text=full_name,
+                font=ctk.CTkFont(size=11), anchor="w",
+            ).pack(side="left", fill="x", expand=True, padx=(5, 2))
+
+            ctk.CTkButton(
+                row_frame,
+                text="🗑",
+                width=30, height=24,
+                fg_color="#c0392b",
+                hover_color="#962d22",
+                font=ctk.CTkFont(size=12),
+                command=lambda pid=person["id"], pn=full_name: self._delete_person(pid, pn),
+            ).pack(side="right", padx=2)
+
+    def _delete_person(self, person_id: int, person_name: str) -> None:
+        """Eliminar una persona registrada tras confirmación."""
+        # Crear un diálogo de confirmación
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Confirmar eliminación")
+        dialog.geometry("380x150")
+        dialog.transient(self)
+        dialog.grab_set()
+
+        ctk.CTkLabel(
+            dialog,
+            text=f"¿Eliminar a '{person_name}'?\n\nEsta acción no se puede deshacer.",
+            wraplength=340,
+            font=ctk.CTkFont(size=13),
+        ).pack(expand=True, padx=20, pady=15)
+
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(pady=(0, 15))
+
+        def _confirm():
+            dialog.destroy()
+            success = self.db_manager.delete_person(person_id)
+            if success:
+                self._recognizer.invalidate_cache()
+                self._set_status(f"✅ '{person_name}' eliminado correctamente.")
+                self._refresh_persons_list()
+            else:
+                self._set_status(f"❌ No se pudo eliminar a '{person_name}'.", error=True)
+
+        ctk.CTkButton(
+            btn_frame, text="❌ Eliminar", command=_confirm,
+            fg_color="#c0392b", hover_color="#962d22", width=100,
+        ).pack(side="left", padx=10)
+
+        ctk.CTkButton(
+            btn_frame, text="Cancelar", command=dialog.destroy,
+            fg_color="gray", width=100,
+        ).pack(side="left", padx=10)

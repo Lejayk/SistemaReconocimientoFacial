@@ -10,6 +10,7 @@ Dependencias: OpenCV, DeepFace (o modelo TensorFlow/ONNX).
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -17,6 +18,9 @@ import cv2
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# Ruta al clasificador Haar Cascade de OpenCV (incluido en opencv-python)
+_HAAR_CASCADE_PATH = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
 
 # ---------------------------------------------------------------------------
 # Alias de tipos
@@ -63,6 +67,16 @@ class FaceRecognizer:
         self.distance_metric = distance_metric
         self.threshold = threshold
 
+        # Clasificador Haar Cascade para detección rápida (frame a frame)
+        self._haar_cascade = cv2.CascadeClassifier(_HAAR_CASCADE_PATH)
+        if self._haar_cascade.empty():
+            logger.warning("No se pudo cargar el clasificador Haar Cascade.")
+
+        # Caché de personas registradas para evitar consultas repetidas a la BD
+        self._people_cache: Optional[List[dict]] = None
+        self._cache_timestamp: float = 0.0
+        self._cache_ttl: float = 5.0  # Tiempo de vida del caché en segundos
+
         # Importación lazy de DeepFace para permitir importar el módulo
         # incluso cuando no están instaladas todas las dependencias.
         try:
@@ -79,8 +93,38 @@ class FaceRecognizer:
     # API Pública
     # ------------------------------------------------------------------
 
+    def detect_faces_fast(self, frame: np.ndarray) -> List[dict]:
+        """Detección rápida de rostros usando Haar Cascade de OpenCV.
+
+        Este método es ~100x más rápido que DeepFace y se usa para el
+        loop principal de video. Para embedding/reconocimiento se sigue
+        usando DeepFace.
+
+        Parameters
+        ----------
+        frame:
+            Imagen BGR como array de NumPy.
+
+        Returns
+        -------
+        list of dict
+            Cada entrada tiene ``"x"``, ``"y"``, ``"w"``, ``"h"``,
+            ``"confidence"``.
+        """
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        detections = self._haar_cascade.detectMultiScale(
+            gray, scaleFactor=1.3, minNeighbors=5, minSize=(30, 30)
+        )
+
+        faces = []
+        for (x, y, w, h) in detections:
+            faces.append(
+                {"x": int(x), "y": int(y), "w": int(w), "h": int(h), "confidence": 1.0}
+            )
+        return faces
+
     def detect_faces(self, frame: np.ndarray) -> List[dict]:
-        """Detectar todos los rostros en *frame* y devolver sus bounding boxes.
+        """Detectar rostros usando DeepFace (más preciso, más lento).
 
         Parameters
         ----------
@@ -321,12 +365,32 @@ class FaceRecognizer:
 
         raise ValueError(f"Métrica de distancia desconocida: {self.distance_metric}")
 
+    def invalidate_cache(self) -> None:
+        """Invalidar el caché de personas registradas.
+
+        Llamar después de registrar o eliminar una persona para que
+        la próxima identificación recargue los datos de la BD.
+        """
+        self._people_cache = None
+        self._cache_timestamp = 0.0
+        logger.debug("Caché de personas invalidado.")
+
+    def _get_people_cached(self, db_manager) -> List[dict]:
+        """Obtener personas registradas usando caché con TTL."""
+        now = time.time()
+        if self._people_cache is None or (now - self._cache_timestamp) > self._cache_ttl:
+            self._people_cache = db_manager.get_all_people()
+            self._cache_timestamp = now
+        return self._people_cache
+
     def identify(
         self,
         face_img: np.ndarray,
         db_manager,
     ) -> Optional[dict]:
         """Identificar la persona en *face_img* contra embeddings almacenados.
+
+        Usa un caché con TTL para evitar consultas repetidas a la BD.
 
         Parameters
         ----------
@@ -346,7 +410,7 @@ class FaceRecognizer:
         if query_emb is None:
             return None
 
-        people = db_manager.get_all_people()
+        people = self._get_people_cached(db_manager)
         if not people:
             return None
 
